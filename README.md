@@ -16,7 +16,7 @@ A web-based AI tool that helps users better understand and engage with text by g
 
 ## 🚀 Quick Start
 
-### 1. Clone the Repo
+## 1. Clone the Repo
 
 ```bash
 git clone https://github.com/guruprasadsa/smart-reading-assistant.git
