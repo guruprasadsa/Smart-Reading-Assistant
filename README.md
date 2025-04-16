@@ -14,7 +14,7 @@ A web-based AI tool that helps users better understand and engage with text by g
 
 ---
 
-## 🚀 Quick Start
+# 🚀 Quick Start
 
 ## 1. Clone the Repo
 
