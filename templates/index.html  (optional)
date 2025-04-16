@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="stylesheet" href="../static/style.css">
+    <title>Smart Reading Assistant</title>
+</head>
+<body>
+    <header>
+        <h1>Welcome to the Smart Reading Assistant</h1>
+    </header>
+    <main>
+        <section>
+            <h2>Summarize Your Text</h2>
+            <form action="/summarize" method="post">
+                <textarea name="text" rows="10" cols="50" placeholder="Enter text to summarize..."></textarea>
+                <br>
+                <button type="submit">Summarize</button>
+            </form>
+        </section>
+        <section>
+            <h2>Summary Result</h2>
+            <div id="summary-result">
+                <!-- Summary will be displayed here -->
+            </div>
+        </section>
+    </main>
+    <footer>
+        <p>&copy; 2023 Smart Reading Assistant</p>
+    </footer>
+</body>
+</html>
