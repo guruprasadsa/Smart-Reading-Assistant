@@ -1,18 +1,29 @@
-from flask import Flask, request, render_template
-from summarizer_module import Summarizer
+# app.py
+
+from flask import Flask, request, jsonify, render_template
+from summarizer_module import generate_summary, extract_key_phrases
 
 app = Flask(__name__)
-summarizer = Summarizer()
 
 @app.route('/')
-def home():
-    return render_template('index.html')
+def index():
+    return render_template("index.html")
 
-@app.route('/summarize', methods=['POST'])
-def summarize():
-    text = request.form['text']
-    summary = summarizer.summarize_text(text)
-    return {'summary': summary}
+@app.route('/process', methods=['POST'])
+def process_text():
+    data = request.get_json()
+    text = data.get("text", "")
 
-if __name__ == '__main__':
+    if not text.strip():
+        return jsonify({"error": "Text is empty!"}), 400
+
+    summary = generate_summary(text)
+    key_phrases = extract_key_phrases(text)
+
+    return jsonify({
+        "summary": summary,
+        "key_phrases": key_phrases
+    })
+
+if __name__ == "__main__":
     app.run(debug=True)
