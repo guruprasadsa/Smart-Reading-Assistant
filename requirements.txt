@@ -1,4 +1,5 @@
 flask
 transformers
-torch
-spacy
+sentence-transformers
+faiss-cpu
+nltk

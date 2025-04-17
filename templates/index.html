@@ -1,86 +1,57 @@
-<!-- templates/index.html -->
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <meta charset="UTF-8">
   <title>Smart Personal Reading Assistant</title>
-  <style>
-    body {
-      font-family: Arial, sans-serif;
-      margin: 2rem;
-      background-color: #f4f4f4;
-    }
-    h1 {
-      color: #333;
-    }
-    textarea {
-      width: 100%;
-      height: 150px;
-      padding: 1rem;
-      font-size: 1rem;
-    }
-    button {
-      padding: 10px 20px;
-      font-size: 1rem;
-      margin-top: 10px;
-      cursor: pointer;
-    }
-    .output {
-      margin-top: 2rem;
-      background: white;
-      padding: 1rem;
-      border-radius: 5px;
-    }
-  </style>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
 </head>
 <body>
+  <div class="container">
+    <h1>📚 Smart Personal Reading Assistant</h1>
+    <form id="text-form">
+      <textarea name="text" id="text" placeholder="Paste your text here..." required></textarea>
+      <button type="submit">Analyze</button>
+    </form>
 
-  <h1>📚 Smart Personal Reading Assistant</h1>
+    <div id="results" class="hidden">
+      <h2>📄 Summary</h2>
+      <p id="summary"></p>
 
-  <form id="textForm">
-    <label for="inputText">Enter your text:</label><br/>
-    <textarea id="inputText" required></textarea><br/>
-    <button type="submit">Analyze</button>
-  </form>
+      <h2>🔑 Key Phrases</h2>
+      <ul id="key-phrases"></ul>
 
-  <div class="output" id="result" style="display: none;">
-    <h2>Summary:</h2>
-    <p id="summaryText"></p>
+      <h2>🔍 Retrieved Context</h2>
+      <ul id="related-docs"></ul>
 
-    <h2>Key Phrases:</h2>
-    <ul id="keyPhrasesList"></ul>
+      <h2>🧾 Structured Output (Few-shot Prompt)</h2>
+      <pre id="structured-output"></pre>
+    </div>
   </div>
 
   <script>
-    const form = document.getElementById('textForm');
-    form.addEventListener('submit', async (e) => {
+    const form = document.getElementById('text-form');
+    const summaryEl = document.getElementById('summary');
+    const keyPhrasesEl = document.getElementById('key-phrases');
+    const relatedDocsEl = document.getElementById('related-docs');
+    const structuredOutputEl = document.getElementById('structured-output');
+    const results = document.getElementById('results');
+
+    form.onsubmit = async (e) => {
       e.preventDefault();
-
-      const inputText = document.getElementById('inputText').value;
-      const response = await fetch('/process', {
+      const formData = new FormData(form);
+      const response = await fetch('/analyze', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({ text: inputText })
+        body: formData
       });
-
       const data = await response.json();
 
-      document.getElementById('summaryText').innerText = data.summary || 'N/A';
+      summaryEl.textContent = data.summary;
+      keyPhrasesEl.innerHTML = data.key_phrases.map(k => `<li>${k}</li>`).join('');
+      relatedDocsEl.innerHTML = data.related_docs.map(d => `<li>${d}</li>`).join('');
+      structuredOutputEl.textContent = data.structured_output;
 
-      const keyList = document.getElementById('keyPhrasesList');
-      keyList.innerHTML = '';
-      (data.key_phrases || []).forEach((phrase) => {
-        const li = document.createElement('li');
-        li.innerText = phrase;
-        keyList.appendChild(li);
-      });
-
-      document.getElementById('result').style.display = 'block';
-    });
+      results.classList.remove('hidden');
+    };
   </script>
-
 </body>
 </html>
