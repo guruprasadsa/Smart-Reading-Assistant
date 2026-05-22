@@ -8,7 +8,8 @@ query, list documents, and clear.
 
 import os
 import logging
-from typing import Dict, List, Any, Optional
+import threading
+from typing import Dict, List, Optional, Any
 
 from ingestion import chunk_document
 from retrieval import VectorStoreManager, RAGQueryEngine
@@ -18,6 +19,7 @@ logger = logging.getLogger(__name__)
 # ─── Module-level singletons ───────────────────────────────────────────────────
 _vector_store_manager: Optional[VectorStoreManager] = None
 _query_engine: Optional[RAGQueryEngine] = None
+_init_lock = threading.Lock()
 
 
 def initialize_rag(
@@ -39,15 +41,19 @@ def initialize_rag(
     """
     global _vector_store_manager, _query_engine
 
-    persist_dir = persist_directory or os.getenv("CHROMA_PERSIST_DIR", "./chroma_db")
+    with _init_lock:
+        if _vector_store_manager is not None and _query_engine is not None:
+            return  # Already initialized by another thread
 
-    _vector_store_manager = VectorStoreManager(
-        persist_directory=persist_dir,
-        api_key=api_key,
-    )
-    _query_engine = RAGQueryEngine(_vector_store_manager)
+        persist_dir = persist_directory or os.getenv("CHROMA_PERSIST_DIR", "./chroma_db")
 
-    logger.info("RAG system initialized (persist_dir='%s')", persist_dir)
+        _vector_store_manager = VectorStoreManager(
+            persist_directory=persist_dir,
+            api_key=api_key,
+        )
+        _query_engine = RAGQueryEngine(_vector_store_manager)
+
+        logger.info("RAG system initialized (persist_dir='%s')", persist_dir)
 
 
 def add_document_to_rag(filepath: str) -> Dict[str, Any]:
