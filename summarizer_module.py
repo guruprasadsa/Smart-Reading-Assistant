@@ -1,34 +1,25 @@
 # summarizer_module.py
 """
-Text summarization using HuggingFace BART and key phrase extraction using spaCy.
-Uses AutoModelForSeq2SeqLM directly (compatible with transformers v5.x where
-the 'summarization' pipeline task was removed).
+Text summarization using Google Gemini API and key phrase extraction using spaCy.
 """
 
 import logging
-from transformers import AutoTokenizer, AutoModelForSeq2SeqLM
 import spacy
+from langchain_core.prompts import PromptTemplate
+from langchain_google_genai import ChatGoogleGenerativeAI
+from langchain_core.messages import HumanMessage
 
 logger = logging.getLogger(__name__)
 
-# ─── Model Configuration ──────────────────────────────────────────────────────
-SUMMARIZER_MODEL = "facebook/bart-large-cnn"
-MAX_INPUT_LENGTH = 1024
-MAX_SUMMARY_LENGTH = 150
-MIN_SUMMARY_LENGTH = 30
-
-# Load summarizer model and tokenizer once at import time
-logger.info("Loading summarizer model '%s'...", SUMMARIZER_MODEL)
-tokenizer = AutoTokenizer.from_pretrained(SUMMARIZER_MODEL)
-model = AutoModelForSeq2SeqLM.from_pretrained(SUMMARIZER_MODEL)
-logger.info("Summarizer model loaded successfully")
-
 # Load spaCy model for key phrase extraction
-nlp = spacy.load("en_core_web_sm")
-
+try:
+    nlp = spacy.load("en_core_web_sm")
+except OSError:
+    logger.error("Spacy model not found. Ensure 'python -m spacy download en_core_web_sm' is run.")
+    nlp = None
 
 def generate_summary(text):
-    """Generate a concise summary of the input text using BART.
+    """Generate a concise summary of the input text using Gemini Flash.
 
     Args:
         text: Input text to summarize.
@@ -36,26 +27,30 @@ def generate_summary(text):
     Returns:
         Summary string.
     """
-    # Truncate to max input length
-    text = text[:MAX_INPUT_LENGTH]
-
-    inputs = tokenizer(
-        text,
-        return_tensors="pt",
-        max_length=MAX_INPUT_LENGTH,
-        truncation=True,
-    )
-
-    summary_ids = model.generate(
-        inputs["input_ids"],
-        max_length=MAX_SUMMARY_LENGTH,
-        min_length=MIN_SUMMARY_LENGTH,
-        do_sample=False,
-    )
-
-    summary = tokenizer.decode(summary_ids[0], skip_special_tokens=True)
-    return summary
-
+    try:
+        # Use gemini-2.5-flash for summarization
+        llm = ChatGoogleGenerativeAI(
+            model="gemini-2.5-flash",
+            temperature=0.3,
+            max_tokens=250,
+            timeout=30,
+            max_retries=2,
+        )
+        
+        prompt = f"""
+        Summarize the following text in a concise and clear manner. 
+        Keep the summary between 30 and 150 words.
+        
+        TEXT TO SUMMARIZE:
+        {text[:5000]} # Limit to 5000 chars for context window
+        """
+        
+        message = HumanMessage(content=prompt)
+        response = llm.invoke([message])
+        return response.content.strip()
+    except Exception as e:
+        logger.error("Summarization failed: %s", str(e))
+        return "Summary could not be generated due to an error."
 
 def extract_key_phrases(text):
     """Extract key noun phrases from text using spaCy NLP.
@@ -66,6 +61,8 @@ def extract_key_phrases(text):
     Returns:
         List of unique key phrases (strings).
     """
+    if not nlp:
+        return []
     doc = nlp(text)
     phrases = list(set(chunk.text.strip() for chunk in doc.noun_chunks if len(chunk.text.strip()) > 2))
     return phrases
