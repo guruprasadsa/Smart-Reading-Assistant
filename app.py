@@ -56,7 +56,7 @@ try:
 except ValueError as e:
     logger.warning(
         "RAG system not initialized (missing API key): %s. "
-        "RAG features will be disabled. Set GOOGLE_API_KEY in .env file.",
+        "RAG features will be disabled. Set GOOGLE_API_KEY in .env file or Cloud Secrets.",
         str(e),
     )
 except Exception as e:
@@ -146,7 +146,7 @@ def upload():
     """
     if not rag_initialized:
         return jsonify({
-            "error": "RAG system is not initialized. Set GOOGLE_API_KEY in .env file."
+            "error": "RAG system is not initialized. Set GOOGLE_API_KEY in .env file or Cloud Secrets."
         }), 503
 
     if "file" not in request.files:
@@ -207,7 +207,7 @@ def ask():
     """
     if not rag_initialized:
         return jsonify({
-            "error": "RAG system is not initialized. Set GOOGLE_API_KEY in .env file."
+            "error": "RAG system is not initialized. Set GOOGLE_API_KEY in .env file or Cloud Secrets."
         }), 503
 
     data = request.get_json(silent=True)

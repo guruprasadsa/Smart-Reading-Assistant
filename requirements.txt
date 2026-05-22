@@ -9,5 +9,6 @@ langchain-text-splitters>=0.0.1
 pymupdf>=1.23.0
 python-docx>=0.8.11
 spacy>=3.7.0
+google-cloud-secret-manager>=2.16.0
 werkzeug>=2.3.0
 gunicorn>=21.2.0

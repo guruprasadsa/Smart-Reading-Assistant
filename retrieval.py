@@ -24,6 +24,8 @@ from langchain_community.vectorstores import Chroma
 from google import genai
 from google.genai import types
 
+from secrets_utils import get_api_key
+
 logger = logging.getLogger(__name__)
 
 # ─── Embedding Configuration ──────────────────────────────────────────────────
@@ -123,12 +125,12 @@ class VectorStoreManager:
             ValueError: If no Google API key is found.
         """
         self.persist_directory = persist_directory
-        self._api_key = api_key or os.getenv("GOOGLE_API_KEY")
+        self._api_key = api_key or get_api_key()
 
         if not self._api_key:
             raise ValueError(
-                "Google API key is required. Set GOOGLE_API_KEY in your .env file "
-                "or pass it directly. Get a free key at https://aistudio.google.com/apikey"
+                "Google API key is required. Set GOOGLE_API_KEY in your .env file, "
+                "or ensure the Cloud Run service account has Secret Manager Secret Accessor role."
             )
 
         # Use custom embedding wrapper for reliability

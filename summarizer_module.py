@@ -8,6 +8,7 @@ import spacy
 from langchain_core.prompts import PromptTemplate
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.messages import HumanMessage
+from secrets_utils import get_api_key
 
 logger = logging.getLogger(__name__)
 
@@ -31,6 +32,7 @@ def generate_summary(text):
         # Use gemini-2.5-flash for summarization
         llm = ChatGoogleGenerativeAI(
             model="gemini-2.5-flash",
+            google_api_key=get_api_key(),
             temperature=0.3,
             max_tokens=250,
             timeout=30,
