@@ -1,4 +1,4 @@
-# 📚 Smart Reading Assistant
+#  Smart Reading Assistant
 
 > Upload any document. Ask questions. Get cited answers with confidence indicators.
 
@@ -74,7 +74,7 @@ python app.py
 
 | Variable | Required | Default | Description |
 |---|---|---|---|
-| GOOGLE_API_KEY | ✅ Yes | — | Google Gemini API key |
+| GOOGLE_API_KEY |  Yes | — | Google Gemini API key |
 | FLASK_DEBUG | No | True | Enable Flask debug mode |
 | CHROMA_PERSIST_DIR | No | ./chroma_db | ChromaDB storage path |
 | UPLOAD_FOLDER | No | ./uploads | Uploaded files path |
