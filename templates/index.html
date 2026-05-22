@@ -1,57 +1,215 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8">
-  <title>Smart Personal Reading Assistant</title>
-  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="Smart Reading Assistant — Upload documents and ask questions with AI-powered cited answers, confidence indicators, and semantic search.">
+    <title>Smart Reading Assistant — AI-Powered Document Q&A</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📚</text></svg>">
 </head>
 <body>
-  <div class="container">
-    <h1>📚 Smart Personal Reading Assistant</h1>
-    <form id="text-form">
-      <textarea name="text" id="text" placeholder="Paste your text here..." required></textarea>
-      <button type="submit">Analyze</button>
-    </form>
 
-    <div id="results" class="hidden">
-      <h2>📄 Summary</h2>
-      <p id="summary"></p>
+<div class="app-shell">
 
-      <h2>🔑 Key Phrases</h2>
-      <ul id="key-phrases"></ul>
+    <!-- ═══ Header ═══ -->
+    <header class="app-header">
+        <h1>📚 Smart Reading Assistant</h1>
+        <p class="subtitle">Upload documents. Ask questions. Get cited answers.</p>
+        <div class="header-badge">
+            <span class="dot"></span>
+            Powered by Gemini AI + ChromaDB
+        </div>
+    </header>
 
-      <h2>🔍 Retrieved Context</h2>
-      <ul id="related-docs"></ul>
+    <!-- ═══ Tab Navigation ═══ -->
+    <nav class="tab-nav" role="tablist">
+        <button class="tab-btn active" data-tab="rag" role="tab" id="tab-btn-rag" aria-selected="true">📄 RAG Q&A</button>
+        <button class="tab-btn" data-tab="summarize" role="tab" id="tab-btn-summarize" aria-selected="false">📝 Summarize</button>
+        <button class="tab-btn" data-tab="about" role="tab" id="tab-btn-about" aria-selected="false">ℹ️ About</button>
+    </nav>
 
-      <h2>🧾 Structured Output (Few-shot Prompt)</h2>
-      <pre id="structured-output"></pre>
+    <!-- ═══════════════════════════════════════════════════════════════════════
+         TAB 1: RAG Q&A
+         ═══════════════════════════════════════════════════════════════════════ -->
+    <div class="tab-content active" id="tab-rag" role="tabpanel">
+        <div class="rag-layout">
+
+            <!-- Left Sidebar: Upload + Documents -->
+            <aside>
+                <div class="glass-card">
+                    <div class="card-title">
+                        <span class="icon">📁</span> Documents
+                    </div>
+
+                    <!-- Upload Zone -->
+                    <div class="upload-zone" id="upload-zone">
+                        <span class="upload-icon">⬆️</span>
+                        <div class="upload-text">
+                            <strong>Drop a file here</strong> or click to browse
+                        </div>
+                        <div class="upload-formats">
+                            <span class="format-badge">PDF</span>
+                            <span class="format-badge">DOCX</span>
+                            <span class="format-badge">TXT</span>
+                        </div>
+                        <input type="file" id="file-input" accept=".pdf,.docx,.txt" aria-label="Upload document">
+                    </div>
+
+                    <!-- Upload Progress -->
+                    <div class="upload-progress" id="upload-progress">
+                        <div class="progress-bar-track">
+                            <div class="progress-bar-fill" id="progress-bar-fill"></div>
+                        </div>
+                        <div class="upload-status" id="upload-status">Uploading...</div>
+                    </div>
+
+                    <!-- Document List -->
+                    <div class="doc-list" id="doc-list">
+                        <div class="doc-empty">No documents uploaded yet</div>
+                    </div>
+
+                    <!-- Clear Button -->
+                    <button class="btn-clear" id="btn-clear-docs" onclick="clearDocuments()" style="display: none;">
+                        🗑️ Clear All Documents
+                    </button>
+                </div>
+            </aside>
+
+            <!-- Right Panel: Chat -->
+            <main class="glass-card chat-panel">
+                <div class="card-title">
+                    <span class="icon">💬</span> Ask Questions
+                </div>
+
+                <div class="chat-messages" id="chat-messages">
+                    <div class="welcome-state" id="welcome-state">
+                        <span class="welcome-icon">💬</span>
+                        <h3>Ask anything about your documents</h3>
+                        <p>Upload a PDF, DOCX, or TXT file, then ask questions to get cited answers with confidence indicators.</p>
+                    </div>
+                </div>
+
+                <div class="chat-input-row">
+                    <textarea
+                        class="chat-input"
+                        id="chat-input"
+                        placeholder="Ask a question about your documents..."
+                        rows="1"
+                        aria-label="Question input"
+                    ></textarea>
+                    <button class="btn-send" id="btn-send">🔍 Ask</button>
+                </div>
+            </main>
+
+        </div>
     </div>
-  </div>
 
-  <script>
-    const form = document.getElementById('text-form');
-    const summaryEl = document.getElementById('summary');
-    const keyPhrasesEl = document.getElementById('key-phrases');
-    const relatedDocsEl = document.getElementById('related-docs');
-    const structuredOutputEl = document.getElementById('structured-output');
-    const results = document.getElementById('results');
+    <!-- ═══════════════════════════════════════════════════════════════════════
+         TAB 2: Summarize (preserves existing functionality)
+         ═══════════════════════════════════════════════════════════════════════ -->
+    <div class="tab-content" id="tab-summarize" role="tabpanel">
+        <div class="summarize-layout glass-card">
+            <div class="card-title">
+                <span class="icon">📝</span> Text Analysis
+            </div>
 
-    form.onsubmit = async (e) => {
-      e.preventDefault();
-      const formData = new FormData(form);
-      const response = await fetch('/analyze', {
-        method: 'POST',
-        body: formData
-      });
-      const data = await response.json();
+            <textarea
+                class="summarize-textarea"
+                id="summarize-input"
+                placeholder="Paste your text here to generate a summary and extract key phrases..."
+                aria-label="Text to analyze"
+            ></textarea>
 
-      summaryEl.textContent = data.summary;
-      keyPhrasesEl.innerHTML = data.key_phrases.map(k => `<li>${k}</li>`).join('');
-      relatedDocsEl.innerHTML = data.related_docs.map(d => `<li>${d}</li>`).join('');
-      structuredOutputEl.textContent = data.structured_output;
+            <button class="btn-analyze" id="btn-analyze">✨ Analyze Text</button>
 
-      results.classList.remove('hidden');
-    };
-  </script>
+            <div class="results-section" id="results-section">
+                <div class="result-block">
+                    <div class="result-label">📄 Summary</div>
+                    <div class="result-content" id="result-summary"></div>
+                </div>
+                <div class="result-block">
+                    <div class="result-label">🔑 Key Phrases</div>
+                    <ul class="key-phrase-list result-content" id="result-phrases"></ul>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ═══════════════════════════════════════════════════════════════════════
+         TAB 3: About
+         ═══════════════════════════════════════════════════════════════════════ -->
+    <div class="tab-content" id="tab-about" role="tabpanel">
+        <div class="about-layout glass-card">
+            <div class="card-title">
+                <span class="icon">ℹ️</span> About This Project
+            </div>
+
+            <div class="about-section">
+                <h3>🎯 Problem Solved</h3>
+                <p>
+                    Researchers and students waste hours manually reading through long PDFs and
+                    documents to find specific information. This system lets you upload any document
+                    and ask natural language questions, returning <strong>cited answers</strong> with
+                    source references and <strong>confidence indicators</strong> — so you know
+                    exactly how reliable each answer is.
+                </p>
+            </div>
+
+            <div class="about-section">
+                <h3>🏗️ Architecture</h3>
+                <div class="architecture-flow">[Upload PDF / DOCX / TXT]
+       ↓
+[Document Parser — PyMuPDF / python-docx]
+       ↓
+[RecursiveCharacterTextSplitter — 512 chars, 50 overlap]
+       ↓
+[Google embedding-2 → ChromaDB (persistent)]
+       ↓
+[MMR Retrieval (k=5, fetch_k=20, λ=0.7)]
+       ↓
+[Partial Answer Detection — confidence scoring]
+       ↓
+[Gemini 3.5 Flash (temp=0.2) → Answer + Citations]
+       ↓
+[Flask API → Web UI]</div>
+            </div>
+
+            <div class="about-section">
+                <h3>🧠 Engineering Challenge: Partial Answer Detection</h3>
+                <p>
+                    Naive RAG systems either <strong>hallucinate</strong> when no chunk fully answers a question,
+                    or return irrelevant text with false confidence. Our system solves this by checking
+                    <strong>similarity scores before generation</strong>: if the best chunk scores below 0.75,
+                    the prompt switches to a hedged mode that honestly communicates uncertainty. Results are
+                    color-coded:
+                    <span style="color: var(--color-high)">● HIGH</span>,
+                    <span style="color: var(--color-partial)">◐ PARTIAL</span>,
+                    <span style="color: var(--color-not-found)">○ NOT FOUND</span>.
+                </p>
+            </div>
+
+            <div class="about-section">
+                <h3>🛠️ Tech Stack</h3>
+                <div class="tech-stack">
+                    <span class="tech-badge">Python</span>
+                    <span class="tech-badge">Flask</span>
+                    <span class="tech-badge">LangChain</span>
+                    <span class="tech-badge">ChromaDB</span>
+                    <span class="tech-badge">Google Gemini</span>
+                    <span class="tech-badge">spaCy</span>
+                    <span class="tech-badge">PyMuPDF</span>
+                    <span class="tech-badge">HuggingFace</span>
+                </div>
+            </div>
+        </div>
+    </div>
+
+</div>
+
+<!-- Toast Container -->
+<div class="toast-container" id="toast-container"></div>
+
+<script src="{{ url_for('static', filename='app.js') }}"></script>
 </body>
 </html>
