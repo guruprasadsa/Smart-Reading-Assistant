@@ -27,7 +27,7 @@ from google.genai import types
 logger = logging.getLogger(__name__)
 
 # ─── Embedding Configuration ──────────────────────────────────────────────────
-EMBEDDING_MODEL = "models/embedding-001"  # Proper embedding model (NOT a chat model)
+EMBEDDING_MODEL = "models/gemini-embedding-2"  # Google embedding model (NOT a chat model)
 
 # ─── Retrieval Configuration ───────────────────────────────────────────────────
 RETRIEVAL_K = 5           # Number of chunks to return (NOT 50 — would exceed context)
@@ -39,7 +39,7 @@ CONFIDENCE_HIGH_THRESHOLD = 0.75
 CONFIDENCE_PARTIAL_THRESHOLD = 0.40
 
 # ─── LLM Configuration ────────────────────────────────────────────────────────
-LLM_MODEL = "gemini-1.5-flash"
+LLM_MODEL = "gemini-2.5-flash"
 LLM_TEMPERATURE = 0.2     # Low temperature for factual Q&A (NOT 1.0)
 LLM_MAX_TOKENS = 1024
 

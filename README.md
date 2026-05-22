@@ -19,13 +19,13 @@ reliable each answer is.
         ↓
 [RecursiveCharacterTextSplitter — 512 chars, 50 overlap]
         ↓
-[Google embedding-001 → ChromaDB (persistent on disk)]
+[Google gemini-embedding-2 → ChromaDB (persistent on disk)]
         ↓
 [MMR Retrieval — k=5, fetch_k=20, lambda=0.7]
         ↓
 [Partial Answer Detection — similarity score thresholding]
         ↓
-[Gemini 1.5 Flash (temp=0.2) → Answer + Citations]
+[Gemini 2.5 Flash (temp=0.2) → Answer + Citations]
         ↓
 [Flask REST API → Web UI]
 ```

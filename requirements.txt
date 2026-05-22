@@ -12,3 +12,4 @@ spacy>=3.7.0
 transformers>=4.30.0
 torch>=2.0.0
 werkzeug>=2.3.0
+gunicorn>=21.2.0
