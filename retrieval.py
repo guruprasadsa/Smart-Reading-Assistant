@@ -1,10 +1,13 @@
 """
 retrieval.py — ChromaDB Vector Store + MMR Retrieval + Partial Answer Detection
 
-Manages the ChromaDB vector store with Google embeddings, MMR-based retrieval,
+Manages the ChromaDB vector store with Voyage AI embeddings, MMR-based retrieval,
 and confidence-aware query answering using Google Gemini. The key engineering
 challenge is partial answer detection: when retrieved chunks don't fully match
 a question, the system honestly communicates uncertainty instead of hallucinating.
+
+Embeddings: Voyage AI voyage-4-large (MoE architecture)
+LLM:        Google Gemini (for query answering)
 
 Exports:
     VectorStoreManager  — ChromaDB lifecycle, add/list/clear/retrieve
@@ -14,24 +17,23 @@ Exports:
 import os
 import re
 import json
+import time
 import uuid
 import logging
 from typing import Dict, List, Optional, Any
 
 from langchain_core.documents import Document
 from langchain_core.messages import HumanMessage
-from langchain_core.embeddings import Embeddings
 from langchain_google_genai import ChatGoogleGenerativeAI
+from langchain_voyageai import VoyageAIEmbeddings
 from langchain_community.vectorstores import Chroma
-from google import genai
-from google.genai import types
 
 from secrets_utils import get_api_key
 
 logger = logging.getLogger(__name__)
 
 # ─── Embedding Configuration ──────────────────────────────────────────────────
-EMBEDDING_MODEL = "models/gemini-embedding-2"  # Google embedding model (NOT a chat model)
+EMBEDDING_MODEL = "voyage-4-large"  # Voyage AI MoE embedding model (state-of-the-art retrieval)
 
 # ─── Retrieval Configuration ───────────────────────────────────────────────────
 RETRIEVAL_K = 5           # Number of chunks to return (NOT 50 — would exceed context)
@@ -50,42 +52,6 @@ LLM_TEMPERATURE = 0.2     # Low temperature for factual Q&A (NOT 1.0)
 LLM_MAX_TOKENS = 1024
 
 
-# ─── Custom Embedding Wrapper ────────────────────────────────────────────────
-class GeminiEmbeddings(Embeddings):
-    """Custom embedding wrapper using the google-genai SDK directly.
-
-    This bypasses the LangChain GoogleGenerativeAIEmbeddings wrapper to fix
-    batch embedding bugs and ensure reliable Content construction.
-    """
-
-    def __init__(self, model: str, api_key: str):
-        self.model = model
-        self.client = genai.Client(api_key=api_key)
-
-    def embed_documents(self, texts: List[str]) -> List[List[float]]:
-        """Embed a list of texts in batches of 100 (Google API limit)."""
-        batch_size = 100
-        embeddings = []
-        for i in range(0, len(texts), batch_size):
-            batch = texts[i : i + batch_size]
-            contents = [
-                types.Content(parts=[types.Part.from_text(text=text)])
-                for text in batch
-            ]
-            response = self.client.models.embed_content(
-                model=self.model,
-                contents=contents,
-            )
-            embeddings.extend([list(emb.values) for emb in response.embeddings])
-        return embeddings
-
-    def embed_query(self, text: str) -> List[float]:
-        """Embed a single query text."""
-        response = self.client.models.embed_content(
-            model=self.model,
-            contents=text,
-        )
-        return list(response.embeddings[0].values)
 
 
 # ─── Prompt Template ──────────────────────────────────────────────────────────
@@ -118,19 +84,19 @@ class VectorStoreManager:
     """Manages the ChromaDB vector store with persistent storage.
 
     Handles document embedding, storage, retrieval, and lifecycle management.
-    Uses Google's embedding-001 model for vector embeddings and ChromaDB
+    Uses Voyage AI's voyage-4-large model for vector embeddings and ChromaDB
     for persistent vector storage that survives server restarts.
     """
 
     def __init__(self, persist_directory: str, api_key: Optional[str] = None):
-        """Initialize ChromaDB with persistent storage and Google embeddings.
+        """Initialize ChromaDB with persistent storage and Voyage AI embeddings.
 
         Args:
             persist_directory: Path where ChromaDB stores data on disk.
-            api_key: Google API key (falls back to GOOGLE_API_KEY env var).
+            api_key: Google API key for LLM (falls back to GOOGLE_API_KEY env var).
 
         Raises:
-            ValueError: If no Google API key is found.
+            ValueError: If no Google API key or Voyage AI API key is found.
         """
         self.persist_directory = persist_directory
         self._api_key = api_key or get_api_key()
@@ -141,10 +107,16 @@ class VectorStoreManager:
                 "or ensure the Cloud Run service account has Secret Manager Secret Accessor role."
             )
 
-        # Use custom embedding wrapper for reliability
-        self._embeddings = GeminiEmbeddings(
+        voyage_api_key = os.getenv("VOYAGE_API_KEY")
+        if not voyage_api_key:
+            raise ValueError(
+                "Voyage AI API key is required. Set VOYAGE_API_KEY in your .env file."
+            )
+
+        # Use Voyage AI embeddings via the official LangChain integration
+        self._embeddings = VoyageAIEmbeddings(
             model=EMBEDDING_MODEL,
-            api_key=self._api_key,
+            voyage_api_key=voyage_api_key,
         )
 
         # Load existing ChromaDB or create new one
@@ -176,10 +148,26 @@ class VectorStoreManager:
             return 0
 
         try:
-            ids = [str(uuid.uuid4()) for _ in documents]
-            self._vectorstore.add_documents(documents, ids=ids)
-            logger.info("Added %d chunks to vector store", len(documents))
-            return len(documents)
+            # Batch in small groups to respect Voyage AI free-tier rate limits
+            # (3 RPM, 10K TPM). Each batch of 10 chunks ≈ 5K tokens.
+            batch_size = 10
+            total_added = 0
+            for i in range(0, len(documents), batch_size):
+                batch = documents[i : i + batch_size]
+                batch_ids = [str(uuid.uuid4()) for _ in batch]
+                self._vectorstore.add_documents(batch, ids=batch_ids)
+                total_added += len(batch)
+                logger.info(
+                    "Added batch %d/%d (%d chunks) to vector store",
+                    (i // batch_size) + 1,
+                    (len(documents) + batch_size - 1) // batch_size,
+                    len(batch),
+                )
+                # Rate-limit delay between batches (skip after last batch)
+                if i + batch_size < len(documents):
+                    time.sleep(21)  # 21s to stay well within 3 RPM
+            logger.info("Added %d total chunks to vector store", total_added)
+            return total_added
         except Exception as e:
             logger.error("Failed to add documents to vector store: %s", str(e))
             raise
@@ -390,7 +378,22 @@ class RAGQueryEngine:
             # Step 4 — Single LLM call: answer + self-assessed confidence
             prompt_text = RAG_PROMPT.format(context=context, question=question)
             response = self._llm.invoke([HumanMessage(content=prompt_text)])
-            raw_response = response.content.strip()
+
+            # Handle response.content being a list of dicts (newer langchain versions)
+            # e.g. [{'type': 'text', 'text': '...'}, ...]
+            raw_content = response.content
+            if isinstance(raw_content, list):
+                text_parts = []
+                for part in raw_content:
+                    if isinstance(part, str):
+                        text_parts.append(part)
+                    elif isinstance(part, dict) and "text" in part:
+                        text_parts.append(part["text"])
+                    else:
+                        text_parts.append(str(part))
+                raw_response = " ".join(text_parts).strip()
+            else:
+                raw_response = raw_content.strip()
 
             # Step 5 — Parse structured response
             parsed = self._parse_llm_response(raw_response)
