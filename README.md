@@ -1,14 +1,11 @@
-#  Smart Reading Assistant
+# 📄 Smart Reading Assistant
 
-> Upload any document. Ask questions. Get cited answers with confidence indicators.
+A document question-answering system that ingests PDF, DOCX, and TXT files and returns cited answers with confidence indicators using retrieval-augmented generation.
+Try it live at [smart-reading-assistant.run.app](https://smart-reading-assistant-226917960220.asia-south1.run.app).
 
-## Problem Solved
+## Problem
 
-Researchers and students waste hours manually reading through PDFs and documents
-to find specific information. This system lets you upload any document and ask
-natural language questions — returning cited answers with source references and
-confidence indicators (HIGH / PARTIAL / NOT FOUND), so you always know how
-reliable each answer is.
+Researchers, students, and analysts routinely spend hours skimming through long documents to locate specific information. Search tools find keywords but not answers. This project provides a natural language interface over uploaded documents — returning answers grounded in source text, with explicit confidence levels (HIGH, PARTIAL, NOT_FOUND) so the user always knows when the system is uncertain rather than guessing.
 
 ## Architecture
 
@@ -17,45 +14,141 @@ reliable each answer is.
         ↓
 [Document Parser — PyMuPDF / python-docx / plain text]
         ↓
-[RecursiveCharacterTextSplitter — 512 chars, 50 overlap]
+[RecursiveCharacterTextSplitter — 512 tokens, 50 overlap]
         ↓
-[Google gemini-embedding-2 → ChromaDB (persistent on disk)]
+[Google embedding-001 → ChromaDB (persistent)]
         ↓
-[MMR Retrieval — k=5, fetch_k=20, lambda=0.7]
+[MMR Retrieval — k=5, fetch_k=20, λ=0.7]
         ↓
 [Partial Answer Detection — similarity score thresholding]
         ↓
-[Gemini 2.5 Flash (temp=0.2) → Answer + Citations]
+[Gemini 1.5 Flash (temp=0.2) → Answer + Citations]
         ↓
 [Flask REST API → Web UI]
 ```
 
+RecursiveCharacterTextSplitter was chosen over fixed-size chunking because it respects paragraph and sentence boundaries, producing chunks that preserve semantic coherence. The 512-token chunk size with 50-token overlap balances retrieval granularity against context completeness — small enough for precise matching, with enough overlap to avoid splitting mid-sentence at boundaries. MMR (Maximal Marginal Relevance) replaces simple top-k retrieval to diversify the retrieved chunks; without it, the top 5 results often come from the same paragraph, giving the LLM redundant context. Confidence thresholding gates generation quality — the system evaluates similarity scores before prompting the LLM, switching to a hedged prompt when scores fall below threshold rather than producing a confident-sounding hallucination.
+
 ## Key Components
 
-- **Document Ingestion** (`ingestion.py`): Multi-format parsing (PDF, DOCX, TXT)
-  with RecursiveCharacterTextSplitter preserving semantic boundaries
-- **Vector Store** (`retrieval.py`): ChromaDB with persistent storage —
-  documents survive server restarts
-- **MMR Retrieval**: Maximal Marginal Relevance avoids returning redundant chunks
-  from the same paragraph
-- **Partial Answer Detection**: Similarity score thresholding switches the LLM
-  prompt to hedged mode when confidence is low — no silent hallucinations
-- **Existing Features**: HuggingFace BART summarization + spaCy key phrase
-  extraction (no API key required for these)
+| File | Responsibility | Notes |
+|---|---|---|
+| ingestion.py | Document parsing and chunking | Supports PDF, DOCX, TXT |
+| retrieval.py | Vector store management and query engine | ChromaDB + MMR + partial answer detection |
+| rag_module.py | Orchestration layer | Thin wrapper, delegates to ingestion and retrieval |
+| app.py | Flask REST API | Routes only — no business logic |
+| summarizer_module.py | Text summarization and key phrase extraction | HuggingFace BART + spaCy, no API key required |
 
-## Engineering Challenge
+## API Reference
 
-Naive RAG hallucinates when no chunk fully answers a question, or returns
-irrelevant text with false confidence. This system checks similarity scores
-before generation: if the best retrieved chunk scores below 0.75, the prompt
-switches to a hedged mode that explicitly tells the LLM to state what
-information is missing rather than speculate.
+```
+GET  /
+```
+Serves the web UI.
 
-## Setup
+---
+
+```
+GET  /health
+```
+Returns system status.
+```json
+{"status": "ok", "rag_available": true, "summarizer_available": true}
+```
+
+---
+
+```
+POST /upload
+```
+Upload a document for RAG ingestion.
+
+Body: `multipart/form-data` — field: `file` (.pdf, .docx, .txt, max 10MB)
+```json
+{"status": "success", "filename": "paper.pdf", "chunks_created": 42, "message": "Document processed successfully"}
+```
+
+---
+
+```
+POST /ask
+```
+Query the RAG pipeline.
+
+Body: `{"question": "string"}`
+```json
+{
+  "answer": "...",
+  "confidence": "HIGH|PARTIAL|NOT_FOUND",
+  "sources": [{"filename": "paper.pdf", "chunk_preview": "...", "page": 3}],
+  "partial_note": null
+}
+```
+
+---
+
+```
+GET  /documents
+```
+List all documents currently in the vector store.
+```json
+{"documents": [{"filename": "paper.pdf", "chunk_count": 42}]}
+```
+
+---
+
+```
+DELETE /documents
+```
+Remove all documents from the vector store.
+```json
+{"status": "success", "message": "All documents cleared"}
+```
+
+---
+
+```
+POST /analyze
+```
+Summarize text and extract key phrases (no API key required).
+
+Body: `form-data` — field: `text`
+```json
+{"summary": "...", "key_phrases": ["retrieval augmented generation", "vector store"]}
+```
+
+## Engineering Notes
+
+The central challenge in any RAG system is what happens when retrieved context does not actually contain the answer. Naive implementations pass low-relevance chunks to the LLM regardless of match quality, producing responses that sound authoritative but are fabricated. This system addresses that by evaluating similarity scores before generation. Chunks scoring 0.75 or above trigger a standard answer prompt (HIGH confidence). Scores between 0.40 and 0.75 switch to a hedged prompt that instructs the model to state what it found and what is missing (PARTIAL). Below 0.40, the system returns a NOT_FOUND response without invoking the LLM at all, avoiding unnecessary cost and hallucination risk.
+
+Simple top-k retrieval has a second, subtler failure mode: when a document discusses the same concept across multiple paragraphs, the top 5 embeddings often come from adjacent or overlapping chunks in the same section. The LLM receives five variations of the same context and misses relevant information elsewhere in the document. MMR re-ranks candidates using a diversity penalty (λ=0.7), selecting chunks that are individually relevant to the query but dissimilar to each other. This gives the model broader coverage of the document and produces more complete answers, particularly for questions that span multiple sections.
+
+## Tech Stack
+
+| Layer | Technology |
+|---|---|
+| Backend | Python 3.9+, Flask |
+| LLM | Google Gemini 1.5 Flash |
+| Embeddings | Google embedding-001 |
+| Vector Store | ChromaDB (persistent) |
+| Retrieval | LangChain MMR |
+| Document Parsing | PyMuPDF, python-docx |
+| Summarization | HuggingFace BART (facebook/bart-large-cnn) |
+| NLP | spaCy (en_core_web_sm) |
+| Deployment | Google Cloud Run (asia-south1) |
+| Containerization | Docker |
+
+## Deployment
+
+Live instance: [smart-reading-assistant.run.app](https://smart-reading-assistant-226917960220.asia-south1.run.app)
+
+The application is containerized with Docker and deployed to Google Cloud Run in the asia-south1 region. Cloud Run handles scaling, HTTPS termination, and container lifecycle automatically. The API itself is stateless — ChromaDB manages its own persistence to disk, so the vector store survives container restarts as long as the storage volume is retained.
+
+## Local Setup
 
 ### Prerequisites
 - Python 3.9+
-- Google API key — get one free at https://aistudio.google.com/
+- Google API key ([aistudio.google.com](https://aistudio.google.com/))
 
 ### Installation
 
@@ -65,25 +158,25 @@ cd Smart-Reading-Assistant
 pip install -r requirements.txt
 python -m spacy download en_core_web_sm
 cp .env.example .env
-# Open .env and add your GOOGLE_API_KEY
+# Add your GOOGLE_API_KEY to .env
 python app.py
-# Visit http://localhost:5000
+# Application runs at http://localhost:5000
 ```
 
 ### Environment Variables
 
 | Variable | Required | Default | Description |
 |---|---|---|---|
-| GOOGLE_API_KEY |  Yes | — | Google Gemini API key |
-| FLASK_DEBUG | No | True | Enable Flask debug mode |
+| GOOGLE_API_KEY | Yes | — | Google Gemini API key |
+| FLASK_DEBUG | No | True | Flask debug mode |
 | CHROMA_PERSIST_DIR | No | ./chroma_db | ChromaDB storage path |
-| UPLOAD_FOLDER | No | ./uploads | Uploaded files path |
-| MAX_FILE_SIZE_MB | No | 10 | Max upload size |
-
-## Tech Stack
-
-Python · Flask · LangChain · ChromaDB · Google Gemini · spaCy · PyMuPDF · HuggingFace BART
+| UPLOAD_FOLDER | No | ./uploads | Uploaded files directory |
+| MAX_FILE_SIZE_MB | No | 10 | Upload size limit |
 
 ## Demo
 
-[Add Loom video link here after recording]
+Demo video: [to be added]
+
+## License
+
+MIT

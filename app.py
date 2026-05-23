@@ -6,11 +6,14 @@ Routes only — all business logic is delegated to:
   - rag_module.py: document ingestion, RAG retrieval, partial answer detection
 
 Serves a web UI with three tabs: RAG Q&A, Summarize, and About.
+RAG and summarizer subsystems initialize in background threads so the
+server starts accepting requests immediately (no cold-start blocking).
 """
 
 import os
 import logging
 import shutil
+import threading
 
 from flask import Flask, render_template, request, jsonify
 from werkzeug.utils import secure_filename
@@ -38,43 +41,80 @@ app.config["MAX_CONTENT_LENGTH"] = MAX_FILE_SIZE_BYTES
 # Ensure upload directory exists
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
-# ─── Initialize RAG System ────────────────────────────────────────────────────
+# ─── Background Initialization ────────────────────────────────────────────────
+# RAG and summarizer load in background threads so Flask starts serving
+# immediately. Routes return 503 until the relevant subsystem is ready.
+# This eliminates cold-start blocking on Cloud Run.
+
 rag_initialized = False
-
-try:
-    from rag_module import (
-        initialize_rag,
-        add_document_to_rag,
-        query_rag,
-        get_loaded_documents,
-        clear_rag,
-    )
-
-    initialize_rag()
-    rag_initialized = True
-    logger.info("RAG system initialized successfully")
-except ValueError as e:
-    logger.warning(
-        "RAG system not initialized (missing API key): %s. "
-        "RAG features will be disabled. Set GEMINI_API_KEY or GOOGLE_API_KEY in .env file or Cloud Secrets.",
-        str(e),
-    )
-except Exception as e:
-    logger.warning(
-        "RAG system initialization failed: %s. RAG features will be disabled.",
-        str(e),
-    )
-
-# ─── Initialize Summarizer ────────────────────────────────────────────────────
 summarizer_initialized = False
 
-try:
-    from summarizer_module import generate_summary, extract_key_phrases
+# Module-level references populated by background threads
+add_document_to_rag = None
+query_rag = None
+get_loaded_documents = None
+clear_rag = None
+generate_summary = None
+extract_key_phrases = None
 
-    summarizer_initialized = True
-    logger.info("Summarizer module loaded successfully")
-except Exception as e:
-    logger.warning("Summarizer module failed to load: %s", str(e))
+
+def _init_rag_background():
+    """Initialize RAG system in a background thread."""
+    global rag_initialized, add_document_to_rag, query_rag, get_loaded_documents, clear_rag
+
+    try:
+        from rag_module import (
+            initialize_rag,
+            add_document_to_rag as _add_document_to_rag,
+            query_rag as _query_rag,
+            get_loaded_documents as _get_loaded_documents,
+            clear_rag as _clear_rag,
+        )
+
+        initialize_rag()
+
+        # Publish references only after successful initialization
+        add_document_to_rag = _add_document_to_rag
+        query_rag = _query_rag
+        get_loaded_documents = _get_loaded_documents
+        clear_rag = _clear_rag
+        rag_initialized = True
+        logger.info("RAG system initialized successfully (background)")
+    except ValueError as e:
+        logger.warning(
+            "RAG system not initialized (missing API key): %s. "
+            "RAG features will be disabled. Set GEMINI_API_KEY or GOOGLE_API_KEY in .env file or Cloud Secrets.",
+            str(e),
+        )
+    except Exception as e:
+        logger.warning(
+            "RAG system initialization failed: %s. RAG features will be disabled.",
+            str(e),
+        )
+
+
+def _init_summarizer_background():
+    """Initialize summarizer module in a background thread."""
+    global summarizer_initialized, generate_summary, extract_key_phrases
+
+    try:
+        from summarizer_module import (
+            generate_summary as _generate_summary,
+            extract_key_phrases as _extract_key_phrases,
+        )
+
+        generate_summary = _generate_summary
+        extract_key_phrases = _extract_key_phrases
+        summarizer_initialized = True
+        logger.info("Summarizer module loaded successfully (background)")
+    except Exception as e:
+        logger.warning("Summarizer module failed to load: %s", str(e))
+
+
+# Launch both initializations in parallel
+threading.Thread(target=_init_rag_background, name="rag-init", daemon=True).start()
+threading.Thread(target=_init_summarizer_background, name="summarizer-init", daemon=True).start()
+logger.info("Background initialization started — server is accepting requests")
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

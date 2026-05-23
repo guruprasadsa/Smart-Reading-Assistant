@@ -12,6 +12,8 @@ Exports:
 """
 
 import os
+import re
+import json
 import uuid
 import logging
 from typing import Dict, List, Optional, Any
@@ -36,9 +38,11 @@ RETRIEVAL_K = 5           # Number of chunks to return (NOT 50 — would exceed 
 RETRIEVAL_FETCH_K = 20    # Candidates considered before MMR re-ranking
 RETRIEVAL_LAMBDA = 0.7    # MMR balance: 1.0=pure relevance, 0.0=pure diversity
 
-# ─── Confidence Thresholds ─────────────────────────────────────────────────────
-CONFIDENCE_HIGH_THRESHOLD = 0.75
-CONFIDENCE_PARTIAL_THRESHOLD = 0.40
+# ─── Confidence ────────────────────────────────────────────────────────────────
+# Confidence is assessed by the LLM itself (not by embedding distance thresholds).
+# The LLM reads the retrieved context and the question, then semantically
+# determines whether the context fully, partially, or does not answer the query.
+# This is model-agnostic and does not break when embedding models change.
 
 # ─── LLM Configuration ────────────────────────────────────────────────────────
 LLM_MODEL = "gemini-2.5-flash"
@@ -84,25 +88,29 @@ class GeminiEmbeddings(Embeddings):
         return list(response.embeddings[0].values)
 
 
-# ─── Prompt Templates ─────────────────────────────────────────────────────────
-PROMPT_HIGH_CONFIDENCE = (
-    "You are a precise document assistant. Answer the question using "
-    "ONLY the information in the provided context. Be specific and "
-    "cite details from the context. If the context doesn't fully "
-    "address the question, say so clearly.\n\n"
+# ─── Prompt Template ──────────────────────────────────────────────────────────
+# Single prompt: the LLM answers AND self-assesses confidence in one call.
+RAG_PROMPT = (
+    "You are a precise document assistant. Answer the question using ONLY "
+    "the information in the provided context. Be specific and cite details "
+    "from the context. Do not speculate beyond what the context states.\n\n"
     "Context:\n{context}\n\n"
     "Question: {question}\n\n"
-    "Answer:"
-)
-
-PROMPT_PARTIAL_CONFIDENCE = (
-    "You are a precise document assistant. The retrieved documents "
-    "may not fully address this question. Answer ONLY what the "
-    "documents explicitly support. Clearly state what information "
-    "is missing or uncertain. Do not speculate beyond the context.\n\n"
-    "Context:\n{context}\n\n"
-    "Question: {question}\n\n"
-    "Answer only what the context supports, and note any gaps:"
+    "Respond in this exact JSON format and nothing else:\n"
+    '{{\n'
+    '  "answer": "Your detailed answer here, citing the context.",\n'
+    '  "confidence": "HIGH or PARTIAL or NOT_FOUND",\n'
+    '  "partial_note": null\n'
+    '}}\n\n'
+    "Confidence rules (apply these strictly):\n"
+    "- HIGH: The context clearly and fully answers the question.\n"
+    "- PARTIAL: The context contains some relevant information but does not "
+    "fully answer the question. Set partial_note to a brief explanation of "
+    "what information is missing.\n"
+    "- NOT_FOUND: The context does not contain information relevant to the "
+    "question. Set partial_note to explain that the documents do not cover "
+    "this topic.\n\n"
+    "Return ONLY valid JSON. No markdown fences, no extra text."
 )
 
 
@@ -254,9 +262,10 @@ class RAGQueryEngine:
     """Handles LLM querying with partial answer detection.
 
     The key engineering challenge: naive RAG either hallucinates when no chunk
-    fully answers a question, or returns irrelevant text confidently. This engine
-    checks relevance scores BEFORE generating an answer and switches between
-    confident and hedged prompts based on retrieval quality.
+    fully answers a question, or returns irrelevant text confidently. Instead of
+    relying on embedding distance thresholds (which vary across models), this
+    engine asks the LLM to self-assess confidence by reading the retrieved
+    context and determining whether it actually answers the question.
     """
 
     def __init__(self, vector_store_manager: VectorStoreManager):
@@ -276,7 +285,6 @@ class RAGQueryEngine:
         )
 
         self._retriever = vector_store_manager.get_retriever()
-        self._confidence_threshold = CONFIDENCE_HIGH_THRESHOLD
 
         logger.info(
             "RAGQueryEngine initialized (model='%s', temp=%.1f)",
@@ -284,17 +292,62 @@ class RAGQueryEngine:
             LLM_TEMPERATURE,
         )
 
+    @staticmethod
+    def _parse_llm_response(raw: str) -> Dict[str, Any]:
+        """Parse the LLM's JSON response, handling markdown fences and quirks.
+
+        Falls back to treating the raw text as a plain answer with HIGH
+        confidence if JSON parsing fails — avoids crashing on LLM format errors.
+        """
+        text = raw.strip()
+
+        # Strip markdown code fences if the LLM wraps its output
+        fence_match = re.search(r"```(?:json)?\s*\n?(.*?)\n?```", text, re.DOTALL)
+        if fence_match:
+            text = fence_match.group(1).strip()
+
+        try:
+            parsed = json.loads(text)
+            # Validate expected keys
+            answer = parsed.get("answer", text)
+            confidence = parsed.get("confidence", "HIGH").upper()
+            if confidence not in ("HIGH", "PARTIAL", "NOT_FOUND"):
+                confidence = "HIGH"
+            partial_note = parsed.get("partial_note")
+            # Normalize null-like values
+            if partial_note in (None, "null", "None", ""):
+                partial_note = None
+            return {
+                "answer": answer,
+                "confidence": confidence,
+                "partial_note": partial_note,
+            }
+        except (json.JSONDecodeError, AttributeError):
+            logger.warning(
+                "LLM did not return valid JSON — using raw text as answer. "
+                "Raw response (first 200 chars): %s",
+                text[:200],
+            )
+            return {
+                "answer": text,
+                "confidence": "HIGH",
+                "partial_note": None,
+            }
+
     def query(self, question: str) -> Dict[str, Any]:
-        """Full RAG query with partial answer detection.
+        """Full RAG query with LLM-based confidence assessment.
 
         Pipeline:
-        1. Retrieve chunks with relevance scores
-        2. Check confidence via similarity score thresholds
+        1. Retrieve chunks with relevance scores (for sources + logging)
+        2. Early exit if no chunks found
         3. Build context from retrieved chunks
-        4. Select prompt based on confidence level
-        5. Call LLM with the selected prompt
+        4. Single LLM call: answer the question AND self-assess confidence
+        5. Parse structured JSON response
         6. Build deduplicated sources list
         7. Return answer + confidence + sources + partial_note
+
+        Confidence is determined by the LLM reading the context, not by
+        embedding distance thresholds. This is model-agnostic.
 
         Args:
             question: The user's natural language question.
@@ -310,7 +363,7 @@ class RAGQueryEngine:
                 )
             )
 
-            # Step 2 — Check confidence
+            # Step 2 — Early exit if nothing retrieved
             if not results_with_scores:
                 return {
                     "answer": "I could not find any relevant information in the uploaded documents.",
@@ -322,42 +375,28 @@ class RAGQueryEngine:
                     ),
                 }
 
-            max_score = max(score for _, score in results_with_scores)
-            logger.info("Max relevance score: %.3f", max_score)
-
-            if max_score >= CONFIDENCE_HIGH_THRESHOLD:
-                confidence = "HIGH"
-                partial_note = None
-            elif max_score >= CONFIDENCE_PARTIAL_THRESHOLD:
-                confidence = "PARTIAL"
-                partial_note = (
-                    "The documents partially address this question. "
-                    "The answer may be incomplete."
-                )
-            else:
-                confidence = "NOT_FOUND"
-                partial_note = (
-                    "The uploaded documents do not appear to contain "
-                    "relevant information for this question."
+            # Log chunk scores for debugging (no thresholding decisions here)
+            for i, (doc, score) in enumerate(results_with_scores):
+                src = doc.metadata.get("source", "unknown")
+                logger.info(
+                    "  chunk %d: score=%.4f  source=%s  preview=%.80s",
+                    i, score, src, doc.page_content.replace("\n", " "),
                 )
 
             # Step 3 — Build context string
             docs = [doc for doc, _ in results_with_scores]
             context = "\n\n---\n\n".join(doc.page_content for doc in docs)
 
-            # Step 4 — Select prompt based on confidence
-            if confidence == "HIGH":
-                prompt_text = PROMPT_HIGH_CONFIDENCE.format(
-                    context=context, question=question
-                )
-            else:
-                prompt_text = PROMPT_PARTIAL_CONFIDENCE.format(
-                    context=context, question=question
-                )
-
-            # Step 5 — Call LLM
+            # Step 4 — Single LLM call: answer + self-assessed confidence
+            prompt_text = RAG_PROMPT.format(context=context, question=question)
             response = self._llm.invoke([HumanMessage(content=prompt_text)])
-            answer = response.content.strip()
+            raw_response = response.content.strip()
+
+            # Step 5 — Parse structured response
+            parsed = self._parse_llm_response(raw_response)
+            logger.info(
+                "LLM confidence assessment: %s", parsed["confidence"]
+            )
 
             # Step 6 — Build deduplicated sources list
             sources = []
@@ -375,15 +414,14 @@ class RAGQueryEngine:
                         "score": round(float(score), 3),
                     })
 
-            # Step 8 — Return
+            # Step 7 — Return
             return {
-                "answer": answer,
-                "confidence": confidence,
+                "answer": parsed["answer"],
+                "confidence": parsed["confidence"],
                 "sources": sources,
-                "partial_note": partial_note,
+                "partial_note": parsed["partial_note"],
             }
 
-        # Step 7 — Error handling
         except Exception as e:
             logger.error("RAG query failed: %s", str(e))
             return {
