@@ -60,7 +60,7 @@ def add_document_to_rag(filepath: str) -> Dict[str, Any]:
     """Ingest a document into the RAG pipeline.
 
     Full pipeline: parse document → chunk with RecursiveCharacterTextSplitter
-    → embed with Google gemini-embedding-2 → store in ChromaDB.
+    → embed with Voyage AI voyage-4-large → store in ChromaDB.
 
     Args:
         filepath: Absolute path to the document file.

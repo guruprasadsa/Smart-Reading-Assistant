@@ -16,18 +16,18 @@ Researchers, students, and analysts routinely spend hours skimming through long 
         ↓
 [RecursiveCharacterTextSplitter — 512 tokens, 50 overlap]
         ↓
-[Google embedding-001 → ChromaDB (persistent)]
+[Voyage AI voyage-4-large → ChromaDB (persistent)]
         ↓
 [MMR Retrieval — k=5, fetch_k=20, λ=0.7]
         ↓
-[Partial Answer Detection — similarity score thresholding]
+[Confidence Assessment — LLM semantic analysis]
         ↓
-[Gemini 1.5 Flash (temp=0.2) → Answer + Citations]
+[Gemini 3.1 Flash Lite (temp=0.2) → Answer + Citations]
         ↓
 [Flask REST API → Web UI]
 ```
 
-RecursiveCharacterTextSplitter was chosen over fixed-size chunking because it respects paragraph and sentence boundaries, producing chunks that preserve semantic coherence. The 512-token chunk size with 50-token overlap balances retrieval granularity against context completeness — small enough for precise matching, with enough overlap to avoid splitting mid-sentence at boundaries. MMR (Maximal Marginal Relevance) replaces simple top-k retrieval to diversify the retrieved chunks; without it, the top 5 results often come from the same paragraph, giving the LLM redundant context. Confidence thresholding gates generation quality — the system evaluates similarity scores before prompting the LLM, switching to a hedged prompt when scores fall below threshold rather than producing a confident-sounding hallucination.
+RecursiveCharacterTextSplitter was chosen over fixed-size chunking because it respects paragraph and sentence boundaries, producing chunks that preserve semantic coherence. The 512-token chunk size with 50-token overlap balances retrieval granularity against context completeness — small enough for precise matching, with enough overlap to avoid splitting mid-sentence at boundaries. MMR (Maximal Marginal Relevance) replaces simple top-k retrieval to diversify the retrieved chunks; without it, the top 5 results often come from the same paragraph, giving the LLM redundant context. Confidence assessment gates generation quality — the LLM self-evaluates whether the context is sufficient to answer the question, switching to a hedged response (PARTIAL) or declaring NOT_FOUND rather than producing a confident-sounding hallucination.
 
 ## Key Components
 
@@ -37,7 +37,7 @@ RecursiveCharacterTextSplitter was chosen over fixed-size chunking because it re
 | retrieval.py | Vector store management and query engine | ChromaDB + MMR + partial answer detection |
 | rag_module.py | Orchestration layer | Thin wrapper, delegates to ingestion and retrieval |
 | app.py | Flask REST API | Routes only — no business logic |
-| summarizer_module.py | Text summarization and key phrase extraction | HuggingFace BART + spaCy, no API key required |
+| summarizer_module.py | Text summarization and key phrase extraction | Google Gemini 2.5 Flash + spaCy |
 
 ## API Reference
 
@@ -119,7 +119,7 @@ Body: `form-data` — field: `text`
 
 ## Engineering Notes
 
-The central challenge in any RAG system is what happens when retrieved context does not actually contain the answer. Naive implementations pass low-relevance chunks to the LLM regardless of match quality, producing responses that sound authoritative but are fabricated. This system addresses that by evaluating similarity scores before generation. Chunks scoring 0.75 or above trigger a standard answer prompt (HIGH confidence). Scores between 0.40 and 0.75 switch to a hedged prompt that instructs the model to state what it found and what is missing (PARTIAL). Below 0.40, the system returns a NOT_FOUND response without invoking the LLM at all, avoiding unnecessary cost and hallucination risk.
+The central challenge in any RAG system is what happens when retrieved context does not actually contain the answer. Naive implementations pass low-relevance chunks to the LLM regardless of match quality, producing responses that sound authoritative but are fabricated. This system addresses that by asking the LLM to self-assess confidence. The LLM reads the retrieved context and the question, then semantically determines whether the context fully (HIGH), partially (PARTIAL), or does not (NOT_FOUND) answer the query, honest about what is missing without relying on embedding distance thresholds that vary across models.
 
 Simple top-k retrieval has a second, subtler failure mode: when a document discusses the same concept across multiple paragraphs, the top 5 embeddings often come from adjacent or overlapping chunks in the same section. The LLM receives five variations of the same context and misses relevant information elsewhere in the document. MMR re-ranks candidates using a diversity penalty (λ=0.7), selecting chunks that are individually relevant to the query but dissimilar to each other. This gives the model broader coverage of the document and produces more complete answers, particularly for questions that span multiple sections.
 
@@ -128,12 +128,12 @@ Simple top-k retrieval has a second, subtler failure mode: when a document discu
 | Layer | Technology |
 |---|---|
 | Backend | Python 3.9+, Flask |
-| LLM | Google Gemini 1.5 Flash |
-| Embeddings | Google embedding-001 |
+| LLM | Google Gemini 3.1 Flash Lite |
+| Embeddings | Voyage AI voyage-4-large |
 | Vector Store | ChromaDB (persistent) |
 | Retrieval | LangChain MMR |
 | Document Parsing | PyMuPDF, python-docx |
-| Summarization | HuggingFace BART (facebook/bart-large-cnn) |
+| Summarization | Google Gemini 2.5 Flash |
 | NLP | spaCy (en_core_web_sm) |
 | Deployment | Google Cloud Run (asia-south1) |
 | Containerization | Docker |
