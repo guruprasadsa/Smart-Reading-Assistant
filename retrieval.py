@@ -129,7 +129,7 @@ class VectorStoreManager:
 
         if not self._api_key:
             raise ValueError(
-                "Google API key is required. Set GOOGLE_API_KEY in your .env file, "
+                "Google API key is required. Set GEMINI_API_KEY or GOOGLE_API_KEY in your .env file, "
                 "or ensure the Cloud Run service account has Secret Manager Secret Accessor role."
             )
 
