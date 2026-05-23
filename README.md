@@ -173,9 +173,6 @@ python app.py
 | UPLOAD_FOLDER | No | ./uploads | Uploaded files directory |
 | MAX_FILE_SIZE_MB | No | 10 | Upload size limit |
 
-## Demo
-
-Demo video: [to be added]
 
 ## License
 
