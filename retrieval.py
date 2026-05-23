@@ -45,7 +45,7 @@ RETRIEVAL_LAMBDA = 0.7    # MMR balance: 1.0=pure relevance, 0.0=pure diversity
 # This is model-agnostic and does not break when embedding models change.
 
 # ─── LLM Configuration ────────────────────────────────────────────────────────
-LLM_MODEL = "gemini-2.5-flash"
+LLM_MODEL = "gemini-3.1-flash-lite"
 LLM_TEMPERATURE = 0.2     # Low temperature for factual Q&A (NOT 1.0)
 LLM_MAX_TOKENS = 1024
 
